@@ -1,5 +1,9 @@
 # Copyright (c) 2021, ALYF GmbH and contributors
 # For license information, please see license.txt
+#
+# OPRAVENO (2026): migrace ze zrušeného /rest/api/3/search na /rest/api/3/search/jql
+# (Atlassian endpoint odstranil k 1.5.2025 -> 410 Gone). Nové stránkování přes nextPageToken.
+# Zároveň oprava logování chyb pro Frappe v15 (title vs message).
 
 from typing import Iterator
 
@@ -25,17 +29,21 @@ class JiraClient:
 		try:
 			response.raise_for_status()
 		except requests.HTTPError:
-			frappe.log_error(frappe.get_traceback())
+			# v15-safe: krátký title, dlouhý traceback do message
+			frappe.log_error(
+				title="Jira Sync Error",
+				message=frappe.get_traceback(),
+			)
 			return {}
 
 		return response.json()
 
 	def get_issues(self, project: str) -> "Iterator[JiraIssue]":
-		url = f"{self.url}/rest/api/3/search"
+		# Nový endpoint nahrazující zrušený /rest/api/3/search
+		url = f"{self.url}/rest/api/3/search/jql"
 		params = {
 			"jql": f"project = {project}",
 			"fields": "summary",
-			"startAt": 0,
 			"maxResults": 100,
 		}
 
@@ -45,14 +53,18 @@ class JiraClient:
 			if not response:
 				break
 
-			params["startAt"] += params["maxResults"]
-			for issue in response.get("issues"):
+			for issue in response.get("issues") or []:
 				yield JiraIssue.from_dict(issue)
 
-			if response.get("total") < params["startAt"]:
+			# Nové stránkování: pokud přijde nextPageToken, pokračuj, jinak konec
+			next_page_token = response.get("nextPageToken")
+			if not next_page_token:
 				break
 
+			params["nextPageToken"] = next_page_token
+
 	def get_worklogs(self, issue: str) -> "list[JiraWorklog]":
+		# Worklog endpoint zrušen NEBYL -> beze změny
 		url = f"{self.url}/rest/api/3/issue/{issue}/worklog"
 		response = self.get(url)
 		results = response.get("worklogs", [])
