@@ -8,6 +8,7 @@
  "field_order": [
   "user",
   "email",
+  "account_id",
   "costing_rate"
  ],
  "fields": [
@@ -27,6 +28,14 @@
    "read_only": 1
   },
   {
+   "fetch_from": "user.account_id",
+   "fieldname": "account_id",
+   "fieldtype": "Data",
+   "in_list_view": 1,
+   "label": "Jira Account ID",
+   "read_only": 1
+  },
+  {
    "fetch_from": "user.costing_rate",
    "fieldname": "costing_rate",
    "fieldtype": "Currency",
@@ -38,7 +47,7 @@
  "index_web_pages_for_search": 1,
  "istable": 1,
  "links": [],
- "modified": "2021-10-11 20:44:38.028258",
+ "modified": "2026-06-03 00:00:00.000000",
  "modified_by": "Administrator",
  "module": "Jira Integration",
  "name": "Jira User Cost",
