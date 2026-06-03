@@ -109,7 +109,7 @@ def sync_work_logs(
 			)
 
 			if existing_timelog:
-				time_log["is_billable"] = existing_timelog[0].get("is_billable", True)
+				time_log["is_billable"] = existing_timelog[0].get("is_billable", False)
 				existing_timelog[0].update(time_log)
 			else:
 				timesheet.append("time_logs", time_log)
@@ -193,7 +193,7 @@ def get_time_log(
 		"from_time": get_datetime_str(worklog.from_time),
 		"hours": flt(billing_hours, precision=3),
 		"project": project,
-		"is_billable": True,
+		"is_billable": False,
 		"description": description,
 		"billing_hours": billing_hours,
 		"base_billing_rate": billing_rate,
