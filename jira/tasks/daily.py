@@ -1,5 +1,15 @@
 # Copyright (c) 2021, ALYF GmbH and contributors
 # For license information, please see license.txt
+#
+# OPTION B (2026): párování podle Jira accountId místo e-mailu.
+# Jira často skrývá emailAddress (privacy/GDPR -> None), takže párování přes e-mail
+# tiše přeskakovalo worklogy. accountId Jira posílá vždy.
+#
+# Konfigurace na řádku User Billing Details (child "Jira User Cost"):
+#   - account_id  (NOVÉ custom pole) = Jira accountId daného člověka
+#   - email       = Company Email zaměstnance v ERPNext (pro dohledání Employee)
+#   - costing_rate
+# Worklog se napáruje podle account_id; e-mail z worklogu se vůbec nepoužívá.
 
 from datetime import date
 
@@ -26,11 +36,26 @@ def sync_work_logs_from_jira(jira_settings_name=None):
 			jira_settings.api_user,
 			jira_settings.get_password("api_key"),
 		)
+
+		# Mapy klíčované přes accountId (privacy-proof).
+		# account_id se bere z řádku (fetch z Jira User); kdyby chyběl, dotáhne se z masteru.
+		cost_by_account = {}
+		email_by_account = {}
+		for row in jira_settings.billing:
+			account_id = row.get("account_id") or frappe.db.get_value(
+				"Jira User", row.user, "account_id"
+			)
+			if not account_id:
+				continue
+			cost_by_account[account_id] = row.costing_rate
+			email_by_account[account_id] = row.email
+
 		for project_map in jira_settings.mappings:
 			sync_work_logs(
 				jira_client=jira_client,
 				activity_type=jira_settings.activity_type,
-				user_cost_map=jira_settings.get_user_cost(),
+				cost_by_account=cost_by_account,
+				email_by_account=email_by_account,
 				jira_project=project_map.jira_project_key,
 				erpnext_project=project_map.erpnext_project,
 				billing_rate=project_map.billing_rate,
@@ -44,7 +69,8 @@ def sync_work_logs_from_jira(jira_settings_name=None):
 def sync_work_logs(
 	jira_client: JiraClient,
 	activity_type: str,
-	user_cost_map: "dict[str, float]",
+	cost_by_account: "dict[str, float]",
+	email_by_account: "dict[str, str]",
 	jira_project: str,
 	erpnext_project: str,
 	billing_rate: float,
@@ -55,10 +81,17 @@ def sync_work_logs(
 			if sync_after and worklog.from_time.date() < sync_after:
 				continue
 
-			if worklog.author.email_address not in user_cost_map:
+			account_id = worklog.author.account_id
+
+			# Filtr: synchronizujeme jen účty nakonfigurované v User Billing Details
+			if account_id not in cost_by_account:
 				continue
 
-			timesheet = get_timesheet(issue.url, worklog, erpnext_project)
+			employee_email = email_by_account.get(account_id)
+
+			timesheet = get_timesheet(
+				issue.url, worklog, erpnext_project, employee_email
+			)
 			if not timesheet:
 				continue
 
@@ -68,7 +101,7 @@ def sync_work_logs(
 				activity_type=activity_type,
 				project=erpnext_project,
 				billing_rate=billing_rate,
-				costing_rate=user_cost_map.get(worklog.author.email_address, 0),
+				costing_rate=cost_by_account.get(account_id, 0),
 			)
 
 			existing_timelog = timesheet.get(
@@ -84,11 +117,13 @@ def sync_work_logs(
 			try:
 				timesheet.save()
 			except frappe.exceptions.ValidationError:
-				frappe.log_error(frappe.get_traceback())
+				frappe.log_error(
+					title="Jira Sync Error", message=frappe.get_traceback()
+				)
 
 
 def get_timesheet(
-	issue_url: str, worklog: JiraWorklog, erpnext_project: str
+	issue_url: str, worklog: JiraWorklog, erpnext_project: str, employee_email: str
 ) -> Timesheet:
 	ts_detail_filters = {
 		"jira_issue_url": issue_url,
@@ -97,7 +132,7 @@ def get_timesheet(
 
 	ts_detail_filters.update({"docstatus": (">", 0)})
 	if frappe.db.exists("Timesheet Detail", ts_detail_filters):
-		# a timesheet for this worklog has already been submitted
+		# timesheet pro tento worklog už byl submitnutý -> nesahat
 		return None
 
 	ts_detail_filters.update({"docstatus": 0})
@@ -124,8 +159,9 @@ def get_timesheet(
 		{
 			"doctype": "Timesheet",
 			"jira_user_account_id": worklog.author.account_id,
+			# Employee se hledá přes nakonfigurovaný e-mail (ne přes skrytý z worklogu)
 			"employee": frappe.db.get_value(
-				"Employee", {"company_email": worklog.author.email_address}
+				"Employee", {"company_email": employee_email}
 			),
 			"parent_project": erpnext_project,
 			"customer": frappe.db.get_value("Project", erpnext_project, "customer"),
